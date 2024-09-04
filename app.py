@@ -1,7 +1,7 @@
+import os
 import cv2
 import numpy as np
 from scipy.spatial import distance
-from pygame import mixer
 import mediapipe as mp
 import streamlit as st
 import time
@@ -9,9 +9,11 @@ import time
 # Set Streamlit layout to wide and hide the sidebar
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 
-# Initialize Pygame mixer
-mixer.init()
-mixer.music.load("static/music.wav")
+# Conditionally initialize Pygame mixer
+if not os.environ.get('STREAMLIT_SERVER'):
+    from pygame import mixer
+    mixer.init()
+    mixer.music.load("static/music.wav")
 
 def eye_aspect_ratio(eye):
     A = distance.euclidean(eye[1], eye[5])
@@ -21,8 +23,7 @@ def eye_aspect_ratio(eye):
     return ear
 
 # Streamlit UI elements
-st.title("Driver Drowsiness Detection")
-st.subheader("By Sree Harith C")
+st.title("Real-time Drowsiness Detection")
 
 # Button to start/stop the webcam
 if 'run' not in st.session_state:
@@ -31,9 +32,7 @@ if 'run' not in st.session_state:
 def toggle_video():
     st.session_state.run = not st.session_state.run
 
-# Dynamic button text based on the state
-button_text = "Start" if not st.session_state.run else "Stop"
-st.button(button_text, on_click=toggle_video)
+start_button = st.button("Start" if not st.session_state.run else "Stop", on_click=toggle_video)
 
 # Threshold values
 thresh = 0.25
@@ -91,7 +90,8 @@ def process_frame():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     cv2.putText(frame, "****************ALERT!****************", (10, 325),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    mixer.music.play()
+                    if not os.environ.get('STREAMLIT_SERVER'):
+                        mixer.music.play()
             else:
                 flag = 0
 
@@ -113,9 +113,7 @@ if st.session_state.run:
             frame = cv2.resize(frame, (desired_width, desired_height))
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Display the video frame with center alignment
-            stframe.image(frame, channels="RGB", use_column_width=False, width=desired_width)
+            stframe.image(frame, channels="RGB", use_column_width=False)
             time.sleep(0.1)  # Adjust to control the refresh rate
 
     cap.release()
