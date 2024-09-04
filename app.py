@@ -1,4 +1,3 @@
-import os
 import cv2
 import numpy as np
 from scipy.spatial import distance
@@ -6,14 +5,8 @@ import mediapipe as mp
 import streamlit as st
 import time
 
-# Set Streamlit layout to wide and hide the sidebar
+# Set Streamlit layout to wide and collapse the sidebar
 st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
-
-# Conditionally initialize Pygame mixer
-if not os.environ.get('STREAMLIT_SERVER'):
-    from pygame import mixer
-    mixer.init()
-    mixer.music.load("static/music.wav")
 
 def eye_aspect_ratio(eye):
     A = distance.euclidean(eye[1], eye[5])
@@ -32,7 +25,7 @@ if 'run' not in st.session_state:
 def toggle_video():
     st.session_state.run = not st.session_state.run
 
-start_button = st.button("Start" if not st.session_state.run else "Stop", on_click=toggle_video)
+start_button = st.button("Start/Stop Video", on_click=toggle_video)
 
 # Threshold values
 thresh = 0.25
@@ -90,12 +83,20 @@ def process_frame():
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     cv2.putText(frame, "****************ALERT!****************", (10, 325),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    if not os.environ.get('STREAMLIT_SERVER'):
-                        mixer.music.play()
+                    play_alert()
             else:
                 flag = 0
 
     return frame
+
+# Function to play an audio alert in the browser
+def play_alert():
+    audio_html = """
+    <audio autoplay>
+    <source src="https://www.soundjay.com/button/beep-07.wav" type="audio/wav">
+    </audio>
+    """
+    st.components.v1.html(audio_html)
 
 # Streamlit application loop
 if st.session_state.run:
