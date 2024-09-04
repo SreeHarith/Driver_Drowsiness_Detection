@@ -1,16 +1,18 @@
-import streamlit as st
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import cv2
+import numpy as np
 from scipy.spatial import distance
-import dlib
-from imutils import face_utils
-import pygame
+from pygame import mixer
+import mediapipe as mp
+import streamlit as st
+import time
+
+# Set Streamlit layout to wide and hide the sidebar
+st.set_page_config(layout="wide", initial_sidebar_state="collapsed")
 
 # Initialize Pygame mixer
-pygame.mixer.init()
-pygame.mixer.music.load("static/music.wav")
+mixer.init()
+mixer.music.load("static/music.wav")
 
-# Define function for calculating Eye Aspect Ratio (EAR)
 def eye_aspect_ratio(eye):
     A = distance.euclidean(eye[1], eye[5])
     B = distance.euclidean(eye[2], eye[4])
@@ -18,78 +20,108 @@ def eye_aspect_ratio(eye):
     ear = (A + B) / (2.0 * C)
     return ear
 
-# Constants for drowsiness detection
+# Streamlit UI elements
+st.title("Driver Drowsiness Detection")
+st.subheader("By Sree Harith C")
+
+# Button to start/stop the webcam
+if 'run' not in st.session_state:
+    st.session_state.run = False
+
+def toggle_video():
+    st.session_state.run = not st.session_state.run
+
+# Dynamic button text based on the state
+button_text = "Start" if not st.session_state.run else "Stop"
+st.button(button_text, on_click=toggle_video)
+
+# Threshold values
 thresh = 0.25
 frame_check = 20
 
-# Initialize dlib's face detector and shape predictor
-detect = dlib.get_frontal_face_detector()
-predict = dlib.shape_predictor("models/shape_predictor_68_face_landmarks.dat")
+mp_face_mesh = mp.solutions.face_mesh
+face_mesh = mp_face_mesh.FaceMesh(max_num_faces=1, refine_landmarks=True)
 
-# Define indexes for accessing left and right eye landmarks
-(lStart, lEnd) = face_utils.FACIAL_LANDMARKS_68_IDXS["left_eye"]
-(rStart, rEnd) = face_utils.FACIAL_LANDMARKS_68_IDXS["right_eye"]
+# Video capture
+cap = None
+flag = 0
 
-# Video Transformer for Streamlit WebRTC
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.flag = 0
+# Function to process video frames
+def process_frame():
+    global flag
+    ret, frame = cap.read()
+    if not ret:
+        st.write("Failed to grab frame")
+        return None
 
-    def transform(self, frame):
-        img = frame.to_ndarray(format="bgr24")
+    frame = cv2.resize(frame, (450, 450))
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Apply white balance correction
-        result = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(result)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        cl = clahe.apply(l)
-        limg = cv2.merge((cl, a, b))
-        final = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+    # Process the image to get face landmarks
+    results = face_mesh.process(rgb_frame)
 
-        gray = cv2.cvtColor(final, cv2.COLOR_BGR2GRAY)
+    if results.multi_face_landmarks:
+        for face_landmarks in results.multi_face_landmarks:
+            # Extract the landmark positions for the eyes
+            left_eye = [
+                face_landmarks.landmark[i] for i in [33, 160, 158, 133, 153, 144]
+            ]
+            right_eye = [
+                face_landmarks.landmark[i] for i in [362, 385, 387, 263, 373, 380]
+            ]
 
-        rects = detect(gray, 0)
+            # Convert normalized landmarks to coordinates
+            left_eye_coords = [(int(landmark.x * frame.shape[1]), int(landmark.y * frame.shape[0])) for landmark in left_eye]
+            right_eye_coords = [(int(landmark.x * frame.shape[1]), int(landmark.y * frame.shape[0])) for landmark in right_eye]
 
-        for rect in rects:
-            shape = predict(gray, rect)
-            shape = face_utils.shape_to_np(shape)
-            leftEye = shape[lStart:lEnd]
-            rightEye = shape[rStart:rEnd]
-            leftEAR = eye_aspect_ratio(leftEye)
-            rightEAR = eye_aspect_ratio(rightEye)
+            # Calculate EAR for both eyes
+            leftEAR = eye_aspect_ratio(left_eye_coords)
+            rightEAR = eye_aspect_ratio(right_eye_coords)
             ear = (leftEAR + rightEAR) / 2.0
 
-            leftEyeHull = cv2.convexHull(leftEye)
-            rightEyeHull = cv2.convexHull(rightEye)
-            cv2.drawContours(final, [leftEyeHull], -1, (0, 255, 0), 1)
-            cv2.drawContours(final, [rightEyeHull], -1, (0, 255, 0), 1)
+            # Draw the eye contours
+            cv2.polylines(frame, [np.array(left_eye_coords, dtype=np.int32)], True, (0, 255, 0), 1)
+            cv2.polylines(frame, [np.array(right_eye_coords, dtype=np.int32)], True, (0, 255, 0), 1)
 
+            # Check if EAR is below the threshold
             if ear < thresh:
-                self.flag += 1
-                if self.flag >= frame_check:
-                    cv2.putText(final, "****************ALERT!****************", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-                    pygame.mixer.music.play()
+                flag += 1
+                if flag >= frame_check:
+                    cv2.putText(frame, "****************ALERT!****************", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(frame, "****************ALERT!****************", (10, 325),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    mixer.music.play()
             else:
-                self.flag = 0
+                flag = 0
 
-        return final
+    return frame
 
-# Streamlit App
-st.title("Drowsiness Detection")
-st.write("This app detects drowsiness using the Eye Aspect Ratio (EAR) method.")
+# Streamlit application loop
+if st.session_state.run:
+    cap = cv2.VideoCapture(0)
+    stframe = st.empty()  # Create an empty container for the video
 
-# Set high resolution for video stream
-webrtc_streamer(
-    key="example",
-    video_transformer_factory=VideoTransformer,
-    media_stream_constraints={
-        "video": {
-            "width": {"ideal": 1280},
-            "height": {"ideal": 720},
-            "frameRate": {"ideal": 30},
-            "facingMode": "user"  # Use "user" for front camera on mobile devices
-        },
-        "audio": False,
-    }
-)
+    while st.session_state.run:
+        frame = process_frame()
+        if frame is not None:
+            # Resize frame to a moderate size
+            desired_width = 640  # Set the desired width for moderate size
+            height, width, _ = frame.shape
+            aspect_ratio = width / height
+            desired_height = int(desired_width / aspect_ratio)
+            frame = cv2.resize(frame, (desired_width, desired_height))
+            
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Display the video frame with center alignment
+            stframe.image(frame, channels="RGB", use_column_width=False, width=desired_width)
+            time.sleep(0.1)  # Adjust to control the refresh rate
+
+    cap.release()
+    cv2.destroyAllWindows()
+else:
+    if cap is not None and cap.isOpened():
+        cap.release()
+        cv2.destroyAllWindows()
+    st.write("Video is stopped. Click 'Start Video' to begin.")
